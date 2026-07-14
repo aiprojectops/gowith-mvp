@@ -20,6 +20,7 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
   const [taskMinutes, setTaskMinutes] = useState(60);
   const [taskCondition, setTaskCondition] = useState('');
   const [targetDate, setTargetDate] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentGoalId) {
@@ -160,8 +161,6 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
   const handleDeleteTask = (taskId: string) => {
     setLocalTasks(localTasks.filter(t => t.id !== taskId));
   };
-
-  const [validationError, setValidationError] = useState<string | null>(null);
 
   const handleSaveTask = (e: React.FormEvent) => {
     e.preventDefault();
