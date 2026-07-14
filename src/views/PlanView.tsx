@@ -3,6 +3,7 @@ import { Sparkles, Edit2, Trash2, Plus, Lock, Star, X, Clock, Loader2, AlertCirc
 import { ViewProps, Goal, Task } from '../types';
 import { getGoal, getTasksForCycle, saveTasks, formatDate, addDays, getDayOfWeekString, getDaysDifference } from '../utils/storage';
 import { ComingSoonButton } from '../components/ComingSoonModal';
+import { GoogleGenAI } from '@google/genai';
 
 export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
   const [goal, setGoal] = useState<Goal | null>(null);
@@ -210,17 +211,101 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/generate-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal, performanceDates })
-      });
-      if (!response.ok) {
-        throw new Error('AI 계획 생성 도중 에러가 발생했습니다.');
+      let data = null;
+      let useClientSide = false;
+
+      try {
+        const response = await fetch('/api/generate-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal, performanceDates })
+        });
+        if (response.ok) {
+          data = await response.json();
+        } else {
+          useClientSide = true;
+        }
+      } catch (e) {
+        useClientSide = true;
       }
-      const data = await response.json();
+
+      if (useClientSide) {
+        let localKey = localStorage.getItem('gowith_gemini_api_key');
+        if (!localKey) {
+          localKey = prompt('Gemini API 키가 설정되지 않았습니다. AI 계획 생성을 위해 API 키를 입력해 주세요:');
+          if (localKey) {
+            localStorage.setItem('gowith_gemini_api_key', localKey);
+          } else {
+            throw new Error('API 키 입력이 취소되어 AI 계획을 생성할 수 없습니다.');
+          }
+        }
+
+        const ai = new GoogleGenAI({ apiKey: localKey });
+        const datesStr = performanceDates.map(d => `${d.date} (${d.dayName}요일)`).join(', ');
+        const promptText = `
+당신은 목표 관리 지원 AI 비서입니다. 사용자의 목표 정보를 바탕으로 현재 5일 수행일에 알맞은 일일 과제(태스크) 계획을 수립해야 합니다.
+다음 기획서 원칙 및 제약 조건을 엄격하게 적용하여 생성해 주세요.
+
+[사용자 목표 정보]
+- 목표명: "${goal.title}"
+- 목표 설명: "${goal.description || '없음'}"
+- 목표 수행 이유: "${goal.goal_reason}"
+- 성공 기준: "${goal.success_condition}"
+- 현재 수준: "${goal.current_level || '없음'}"
+- 전체 목표 난이도: ${goal.difficulty}단계 (1~5)
+- 주당 가능 시간: ${goal.weekly_hours}시간
+
+[생성 대상 수행일 날짜]
+아래 명시된 5개의 날짜에만 각각 과제를 배정해야 합니다. 보완일과 휴식일은 생성 대상에서 제외됩니다.
+날짜 목록: ${datesStr}
+
+[엄격한 제약 조건]
+1. 과제는 오직 위 ${performanceDates.length}개의 날짜에만 정확히 배정해야 합니다.
+2. 각 날짜(수행일)당 배정할 수 있는 과제는 최대 2개 이하로 제한합니다.
+3. 전체 사이클(5일 수행일 총합)의 과제 개수는 최대 10개 이하여야 합니다.
+4. 과제별 난이도는 사용자가 설정한 전체 난이도(${goal.difficulty})를 초과할 수 없습니다. 즉, 모든 과제 난이도는 1부터 ${goal.difficulty} 사이여야 합니다.
+5. 과제마다 예상 수행 시간(분 단위)과 구체적인 완료 기준을 작성하세요.
+6. 모든 과제의 예상 수행 시간 총합은 사용자의 주당 가능 시간(${goal.weekly_hours}시간 = ${goal.weekly_hours * 60}분)을 절대 초과할 수 없으며, 보완일을 위해 주당 가능 시간의 최소 20%를 여유 시간으로 남겨야 합니다. (총합은 ${Math.round(goal.weekly_hours * 60 * 0.8)}분을 넘지 말 것)
+7. 각 날짜마다 최소 1개의 과제는 반드시 포함되어야 합니다.
+
+응답 형식은 아래 JSON 구조를 만족해야 합니다.
+        `;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: promptText,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'OBJECT',
+              properties: {
+                tasks: {
+                  type: 'ARRAY',
+                  items: {
+                    type: 'OBJECT',
+                    properties: {
+                      scheduled_date: { type: 'STRING' },
+                      title: { type: 'STRING' },
+                      difficulty: { type: 'INTEGER' },
+                      estimated_minutes: { type: 'INTEGER' },
+                      completion_condition: { type: 'STRING' }
+                    },
+                    required: ['scheduled_date', 'title', 'difficulty', 'estimated_minutes', 'completion_condition']
+                  }
+                }
+              },
+              required: ['tasks']
+            }
+          }
+        });
+
+        if (!response.text) {
+          throw new Error('AI 응답이 올바르지 않습니다.');
+        }
+        data = JSON.parse(response.text);
+      }
+
       if (data && Array.isArray(data.tasks)) {
-        // Enforce maximum 2 tasks per day rule from AI output
         const validTasks: Task[] = [];
         const dayCounts: Record<string, number> = {};
 
