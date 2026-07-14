@@ -214,6 +214,52 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
     setIsModalOpen(false);
   };
 
+  // Helper function to balance brackets and extract fully formed task objects from partial JSON streams
+  const extractTasksFromPartialJson = (jsonStr: string): any[] => {
+    const tasks: any[] = [];
+    let openBraces = 0;
+    let startIdx = -1;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      
+      if (char === '"' && !escape) {
+        inString = !inString;
+      }
+      
+      if (char === '\\' && inString) {
+        escape = !escape;
+      } else {
+        escape = false;
+      }
+
+      if (!inString) {
+        if (char === '{') {
+          if (openBraces === 0) {
+            startIdx = i;
+          }
+          openBraces++;
+        } else if (char === '}') {
+          openBraces--;
+          if (openBraces === 0 && startIdx !== -1) {
+            const objStr = jsonStr.substring(startIdx, i + 1);
+            try {
+              const taskObj = JSON.parse(objStr);
+              if (taskObj && taskObj.scheduled_date && taskObj.title) {
+                tasks.push(taskObj);
+              }
+            } catch (e) {
+              // Ignore incomplete/broken objects
+            }
+          }
+        }
+      }
+    }
+    return tasks;
+  };
+
   const handleSaveApiKeys = async () => {
     const sanitizedGemini = geminiApiKeyInput.trim().replace(/[^\x21-\x7E]/g, "");
     const sanitizedOpenai = openaiApiKeyInput.trim().replace(/[^\x21-\x7E]/g, "");
@@ -229,10 +275,11 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
 
     try {
       const aiTest = new GoogleGenAI({ apiKey: sanitizedGemini });
+      // Lightning-fast 1-token authorization request test
       await aiTest.models.generateContent({
         model: 'gemini-3.5-flash',
-        contents: 'Hello. Reply with OK.',
-        config: { maxOutputTokens: 5 }
+        contents: 'p',
+        config: { maxOutputTokens: 1 }
       });
 
       // Save to LocalStorage
@@ -246,7 +293,7 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
         setIsApiKeyModalOpen(false);
         setTestStatus(null);
         handleAIPlan();
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
       console.error('API key verification failed:', err);
       let errMsg = err.message || '알 수 없는 에러가 발생했습니다.';
@@ -323,7 +370,7 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
 응답 형식은 아래 JSON 구조를 만족해야 합니다.
         `;
 
-        const response = await ai.models.generateContent({
+        const responseStream = await ai.models.generateContentStream({
           model: 'gemini-3.5-flash',
           contents: promptText,
           config: {
@@ -351,21 +398,47 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
           }
         });
 
-        if (!response.text) {
-          throw new Error('AI 응답이 올바르지 않습니다.');
+        let accumulatedText = '';
+        for await (const chunk of responseStream) {
+          accumulatedText += chunk.text || '';
+          
+          // Stream and parse partial tasks to show real-time progress!
+          const partialTasks = extractTasksFromPartialJson(accumulatedText);
+          if (partialTasks.length > 0) {
+            const stableMapped = partialTasks.map((t: any, idx: number) => ({
+              id: `task-ai-${idx}`,
+              goal_id: goal.id,
+              cycle_number: 1,
+              scheduled_date: t.scheduled_date || '',
+              title: t.title || '생성 중...',
+              difficulty: t.difficulty || 3,
+              estimated_minutes: t.estimated_minutes || 60,
+              completion_condition: t.completion_condition || '완료',
+              status: 'todo' as const,
+              memo: '',
+              actual_minutes: 0,
+              result_link: '',
+              carryover_count: 0,
+              completed_at: ''
+            }));
+            setLocalTasks(stableMapped);
+          }
         }
-        data = JSON.parse(response.text);
+
+        if (accumulatedText) {
+          data = JSON.parse(accumulatedText);
+        }
       }
 
       if (data && Array.isArray(data.tasks)) {
-        const validTasks: Task[] = [];
+        const finalTasks: Task[] = [];
         const dayCounts: Record<string, number> = {};
 
         data.tasks.forEach((t: any) => {
           const dStr = t.scheduled_date;
           if (!dayCounts[dStr]) dayCounts[dStr] = 0;
-          if (dayCounts[dStr] < 2 && validTasks.length < 10) {
-            validTasks.push({
+          if (dayCounts[dStr] < 2 && finalTasks.length < 10) {
+            finalTasks.push({
               id: Math.random().toString(36).substr(2, 9),
               goal_id: goal.id,
               cycle_number: 1,
@@ -385,7 +458,7 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
           }
         });
 
-        setLocalTasks(validTasks);
+        setLocalTasks(finalTasks);
       }
     } catch (err: any) {
       setError(err.message || 'AI 연동 실패');
