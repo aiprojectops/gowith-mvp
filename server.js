@@ -54,7 +54,7 @@ app.post("/api/generate-plan", async (req, res) => {
 \uC751\uB2F5 \uD615\uC2DD\uC740 \uC544\uB798 JSON \uC2A4\uD0A4\uB9C8\uB97C \uB9CC\uC871\uD574\uC57C \uD569\uB2C8\uB2E4.
     `;
     const response = await aiClient.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
