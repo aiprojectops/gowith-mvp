@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Edit2, Trash2, Plus, Lock, Star, X, Clock, Loader2, AlertCircle } from 'lucide-react';
+import { Sparkles, Edit2, Trash2, Plus, Lock, Star, X, Clock, Loader2, AlertCircle, Key } from 'lucide-react';
 import { ViewProps, Goal, Task } from '../types';
-import { getGoal, getTasksForCycle, saveTasks, formatDate, addDays, getDayOfWeekString, getDaysDifference } from '../utils/storage';
+import { getGoal, getTasksForCycle, saveTasks, formatDate, addDays, getDayOfWeekString, getDaysDifference, getAllTasks } from '../utils/storage';
 import { ComingSoonButton } from '../components/ComingSoonModal';
 import { GoogleGenAI } from '@google/genai';
 
@@ -21,6 +21,12 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
   const [taskCondition, setTaskCondition] = useState('');
   const [targetDate, setTargetDate] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // API Key modal state
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState(localStorage.getItem('gowith_gemini_api_key') || '');
+  const [openaiApiKeyInput, setOpenaiApiKeyInput] = useState(localStorage.getItem('gowith_openai_api_key') || '');
+  const [claudeApiKeyInput, setClaudeApiKeyInput] = useState(localStorage.getItem('gowith_claude_api_key') || '');
 
   useEffect(() => {
     if (currentGoalId) {
@@ -231,12 +237,9 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
       if (useClientSide) {
         let localKey = localStorage.getItem('gowith_gemini_api_key');
         if (!localKey) {
-          localKey = prompt('Gemini API 키가 설정되지 않았습니다. AI 계획 생성을 위해 API 키를 입력해 주세요:');
-          if (localKey) {
-            localStorage.setItem('gowith_gemini_api_key', localKey);
-          } else {
-            throw new Error('API 키 입력이 취소되어 AI 계획을 생성할 수 없습니다.');
-          }
+          setIsApiKeyModalOpen(true);
+          setLoading(false);
+          return;
         }
 
         const ai = new GoogleGenAI({ apiKey: localKey });
@@ -394,6 +397,13 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
           <p className="text-body-sm text-on-surface-variant font-medium">목표: <strong className="text-primary">{goal.title}</strong> | 현재 사이클 계획을 설계하세요.</p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
+          <button 
+            onClick={() => setIsApiKeyModalOpen(true)}
+            className="px-3 py-2.5 rounded-lg border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+            title="API 키 설정"
+          >
+            <Key className="w-4 h-4" />
+          </button>
           <button 
             onClick={handleAIPlan}
             disabled={loading}
@@ -610,6 +620,129 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* API Key Settings Modal */}
+      {isApiKeyModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-surface-bright rounded-2xl max-w-md w-full border border-outline-variant/30 shadow-2xl p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h3 className="text-title-md font-bold text-on-surface flex items-center gap-2">
+                  <Key className="w-5 h-5 text-primary" /> API 키 설정
+                </h3>
+                <p className="text-xs text-on-surface-variant mt-1">AI 계획 생성을 위해 API 키가 필요합니다. 사용하시는 플랫폼의 API 키를 입력해 주세요.</p>
+              </div>
+              <button 
+                onClick={() => setIsApiKeyModalOpen(false)}
+                className="text-on-surface-variant hover:text-on-surface p-1 rounded-lg hover:bg-surface-container transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Gemini API Key */}
+              <div className="bg-surface-container-low p-3.5 rounded-xl border border-outline-variant/20">
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-body-xs font-bold text-on-surface flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-blue-500"></span> Gemini API 키
+                  </label>
+                  <a 
+                    href="https://aistudio.google.com/" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-primary hover:underline font-bold flex items-center gap-0.5"
+                  >
+                    API 키 발급 링크 ↗
+                  </a>
+                </div>
+                <input 
+                  type="password"
+                  value={geminiApiKeyInput}
+                  onChange={(e) => setGeminiApiKeyInput(e.target.value)}
+                  placeholder="AI Studio API 키 입력"
+                  className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-body-xs text-on-surface focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              {/* OpenAI API Key */}
+              <div className="bg-surface-container-low p-3.5 rounded-xl border border-outline-variant/20">
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-body-xs font-bold text-on-surface flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-green-500"></span> OpenAI (GPT) API 키
+                  </label>
+                  <a 
+                    href="https://platform.openai.com/api-keys" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-primary hover:underline font-bold flex items-center gap-0.5"
+                  >
+                    API 키 발급 링크 ↗
+                  </a>
+                </div>
+                <input 
+                  type="password"
+                  value={openaiApiKeyInput}
+                  onChange={(e) => setOpenaiApiKeyInput(e.target.value)}
+                  placeholder="sk-... 로 시작하는 API 키 입력"
+                  className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-body-xs text-on-surface focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              {/* Claude API Key */}
+              <div className="bg-surface-container-low p-3.5 rounded-xl border border-outline-variant/20">
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-body-xs font-bold text-on-surface flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-orange-500"></span> Claude API 키
+                  </label>
+                  <a 
+                    href="https://console.anthropic.com/" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-primary hover:underline font-bold flex items-center gap-0.5"
+                  >
+                    API 키 발급 링크 ↗
+                  </a>
+                </div>
+                <input 
+                  type="password"
+                  value={claudeApiKeyInput}
+                  onChange={(e) => setClaudeApiKeyInput(e.target.value)}
+                  placeholder="sk-ant-... 로 시작하는 API 키 입력"
+                  className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-body-xs text-on-surface focus:outline-none focus:border-primary"
+                />
+              </div>
+            </div>
+
+            <div className="pt-5 flex gap-3 justify-end">
+              <button 
+                type="button" 
+                onClick={() => setIsApiKeyModalOpen(false)}
+                className="px-4 py-2 border border-outline-variant rounded-lg text-body-sm text-on-surface hover:bg-surface-container-low"
+              >
+                취소
+              </button>
+              <button 
+                type="button"
+                onClick={() => {
+                  localStorage.setItem('gowith_gemini_api_key', geminiApiKeyInput);
+                  localStorage.setItem('gowith_openai_api_key', openaiApiKeyInput);
+                  localStorage.setItem('gowith_claude_api_key', claudeApiKeyInput);
+                  setIsApiKeyModalOpen(false);
+                  
+                  // Trigger handleAIPlan again
+                  setTimeout(() => {
+                    handleAIPlan();
+                  }, 100);
+                }}
+                className="px-5 py-2 bg-primary text-on-primary rounded-lg text-body-sm font-semibold hover:bg-primary/95 flex items-center gap-1"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> 저장 및 계획 생성
+              </button>
+            </div>
           </div>
         </div>
       )}
