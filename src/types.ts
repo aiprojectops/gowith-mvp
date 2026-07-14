@@ -35,6 +35,13 @@ export interface Goal {
   updated_at: string;
 }
 
+export interface SubTask {
+  id: string;
+  title: string;
+  description: string;
+  status: 'todo' | 'completed';
+}
+
 export interface Task {
   id: string;
   goal_id: string;
@@ -50,6 +57,7 @@ export interface Task {
   result_link: string;
   carryover_count: number;
   completed_at: string;
+  sub_tasks?: SubTask[];
 }
 
 export interface Cycle {

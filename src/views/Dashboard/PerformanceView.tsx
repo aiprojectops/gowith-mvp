@@ -13,6 +13,7 @@ export function PerformanceView({ onNavigate, currentGoalId, simulatedDayIndex =
 
   // Task Completion Modal State
   const [isCompletionModalOpen, setIsCompletionModalOpen] = useState(false);
+  const [isSubTaskModalOpen, setIsSubTaskModalOpen] = useState(false);
   const [completingTask, setCompletingTask] = useState<Task | null>(null);
   const [completionMemo, setCompletionMemo] = useState('');
   const [actualMinutes, setActualMinutes] = useState(60);
@@ -101,7 +102,31 @@ export function PerformanceView({ onNavigate, currentGoalId, simulatedDayIndex =
     setActualMinutes(task.estimated_minutes);
     setResultLink('');
     setValidationError(null);
-    setIsCompletionModalOpen(true);
+    
+    if (task.sub_tasks && task.sub_tasks.length > 0) {
+      setIsSubTaskModalOpen(true);
+    } else {
+      setIsCompletionModalOpen(true);
+    }
+  };
+
+  const handleToggleSubTask = (subTaskId: string) => {
+    if (!completingTask || !completingTask.sub_tasks) return;
+    const updatedSubTasks = completingTask.sub_tasks.map(st => 
+      st.id === subTaskId 
+        ? { ...st, status: (st.status === 'completed' ? 'todo' : 'completed') as any } 
+        : st
+    );
+    const updatedTask = { ...completingTask, sub_tasks: updatedSubTasks };
+    setCompletingTask(updatedTask);
+    
+    // Update cycleTasks state
+    const updatedCycleTasks = cycleTasks.map(t => t.id === completingTask.id ? updatedTask : t);
+    setCycleTasks(updatedCycleTasks);
+    
+    // Save to LocalStorage
+    const filteredTasks = getAllTasks().filter(t => t.id !== completingTask.id);
+    saveTasks([...filteredTasks, updatedTask]);
   };
 
   const handleSaveCompletion = (e: React.FormEvent) => {
@@ -300,6 +325,21 @@ export function PerformanceView({ onNavigate, currentGoalId, simulatedDayIndex =
                       {task.title}
                     </span>
                     <p className="text-xs text-on-surface-variant mt-1 font-medium">완료 기준: {task.completion_condition}</p>
+                    {task.sub_tasks && task.sub_tasks.length > 0 && !isCompleted && (() => {
+                      const done = task.sub_tasks.filter(st => st.status === 'completed').length;
+                      const total = task.sub_tasks.length;
+                      const pct = Math.round((done / total) * 100);
+                      return (
+                        <div className="mt-2.5 flex items-center gap-2 bg-primary/5 px-2.5 py-1 rounded-lg border border-primary/10 w-fit">
+                          <div className="w-16 h-1 bg-surface-container-high rounded-full overflow-hidden">
+                            <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${pct}%` }}></div>
+                          </div>
+                          <span className="text-[10px] text-primary font-bold">
+                            상세 가이드 {pct}% 수행 ({done}/{total})
+                          </span>
+                        </div>
+                      );
+                    })()}
                     {isCompleted && task.memo && (
                       <p className="text-xs text-secondary mt-2 bg-secondary/5 border border-secondary/10 p-2.5 rounded-lg">
                         <strong>완료 회고:</strong> {task.memo} ({task.actual_minutes}분 소요)
@@ -441,6 +481,210 @@ export function PerformanceView({ onNavigate, currentGoalId, simulatedDayIndex =
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sub Task Checklist Modal */}
+      {isSubTaskModalOpen && completingTask && completingTask.sub_tasks && (
+        <div className="fixed inset-0 bg-on-surface/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+          <div className="bg-surface-container-lowest border border-outline-variant rounded-2xl shadow-2xl p-6 w-full max-w-lg animate-scale-up max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <ClipboardSignature className="w-5 h-5 text-primary" />
+                <h3 className="text-title-md font-bold text-on-surface">AI 상세 과제 가이드 수행</h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsSubTaskModalOpen(false);
+                  setCompletingTask(null);
+                  setValidationError(null);
+                }}
+                className="text-on-surface-variant hover:bg-surface-container-low p-1.5 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Task Info */}
+            <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/20 mb-4">
+              <span className="block text-[11px] font-bold text-primary uppercase tracking-wider">대상 과제</span>
+              <h4 className="text-body-lg font-bold text-on-surface mt-0.5">{completingTask.title}</h4>
+              <p className="text-xs text-on-surface-variant mt-2 bg-surface p-2.5 rounded border border-outline-variant/10">
+                <strong>완료 기준:</strong> {completingTask.completion_condition}
+              </p>
+            </div>
+
+            {/* Sub Tasks Progress */}
+            {(() => {
+              const subTasksDone = completingTask.sub_tasks?.filter(st => st.status === 'completed').length || 0;
+              const subTasksTotal = completingTask.sub_tasks?.length || 0;
+              const subProgress = subTasksTotal > 0 ? Math.round((subTasksDone / subTasksTotal) * 100) : 0;
+              const isAllDone = subProgress === 100;
+
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-xs font-bold text-on-surface-variant">단계별 지침 이행률</span>
+                      <span className="text-xs font-bold text-primary">{subProgress}% ({subTasksDone}/{subTasksTotal})</span>
+                    </div>
+                    <div className="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-primary rounded-full transition-all duration-500" 
+                        style={{ width: `${subProgress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Checklist Items */}
+                  <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                    {completingTask.sub_tasks?.map(st => (
+                      <label 
+                        key={st.id} 
+                        className={`flex items-start gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer ${
+                          st.status === 'completed' 
+                            ? 'bg-primary/5 border-primary/20 text-on-surface/70' 
+                            : 'bg-surface border-outline-variant/30 text-on-surface hover:border-outline'
+                        }`}
+                      >
+                        <input 
+                          type="checkbox"
+                          checked={st.status === 'completed'}
+                          onChange={() => handleToggleSubTask(st.id)}
+                          className="mt-0.5 w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant"
+                        />
+                        <div className="flex-1">
+                          <span className={`text-body-sm font-semibold block ${st.status === 'completed' ? 'line-through' : ''}`}>
+                            {st.title}
+                          </span>
+                          <span className="text-[11px] text-on-surface-variant block mt-0.5">
+                            {st.description}
+                          </span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  {/* Reflection & Result Fields (Unlocked at 100%) */}
+                  <div className={`pt-4 border-t border-outline-variant/20 transition-all duration-300 ${
+                    isAllDone ? 'opacity-100 pointer-events-auto' : 'opacity-40 pointer-events-none'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-secondary mb-3">
+                      <CheckCircle2 className="w-4 h-4 text-secondary" /> 
+                      {isAllDone 
+                        ? '모든 단계를 완료했습니다! 결과물을 기록해 주세요.' 
+                        : '체크리스트의 모든 단계를 클릭하여 100% 완료하면 결과물 입력창이 활성화됩니다.'
+                      }
+                    </div>
+
+                    {validationError && (
+                      <div className="mb-3 bg-error-container text-on-error-container p-2.5 rounded-lg text-xs font-semibold">
+                        {validationError}
+                      </div>
+                    )}
+
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!isAllDone) return;
+                        if (!completionMemo.trim()) {
+                          setValidationError('최종 회고 메모를 입력해주세요.');
+                          return;
+                        }
+                        
+                        const updatedTask: Task = {
+                          ...completingTask,
+                          status: 'completed',
+                          memo: completionMemo,
+                          actual_minutes: actualMinutes,
+                          result_link: resultLink,
+                          completed_at: formatDate(new Date())
+                        };
+
+                        // Update cycleTasks state
+                        setCycleTasks(cycleTasks.map(t => t.id === completingTask.id ? updatedTask : t));
+
+                        // Save to LocalStorage
+                        const filteredTasks = getAllTasks().filter(t => t.id !== completingTask.id);
+                        saveTasks([...filteredTasks, updatedTask]);
+
+                        setIsSubTaskModalOpen(false);
+                        setCompletingTask(null);
+                        setValidationError(null);
+                      }} 
+                      className="space-y-3.5"
+                    >
+                      <div>
+                        <label className="block text-body-sm font-semibold text-on-surface mb-1">최종 회고 메모 <span className="text-error">*</span></label>
+                        <textarea 
+                          value={completionMemo}
+                          onChange={(e) => {
+                            setCompletionMemo(e.target.value);
+                            setValidationError(null);
+                          }}
+                          placeholder="상세 단계를 완료하며 배우거나 성취한 내용, 발생한 결과물을 간략히 요약하세요..."
+                          rows={2}
+                          className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-body-sm text-on-surface focus:outline-none focus:border-primary resize-none"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-body-sm font-semibold text-on-surface mb-1">실제 소요 시간(분)</label>
+                          <input 
+                            type="number" 
+                            min="10" 
+                            step="10"
+                            value={actualMinutes}
+                            onChange={(e) => setActualMinutes(parseInt(e.target.value) || 60)}
+                            className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-body-sm text-on-surface focus:outline-none focus:border-primary"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-body-sm font-semibold text-on-surface mb-1">
+                            {goal?.title.includes('영어') || goal?.title.includes('단어') || goal?.title.includes('공부')
+                              ? '퀴즈 채점 결과 및 오답'
+                              : '최종 완성 결과물 링크'
+                            }
+                          </label>
+                          <input 
+                            type="text" 
+                            value={resultLink}
+                            onChange={(e) => setResultLink(e.target.value)}
+                            placeholder={goal?.title.includes('영어') || goal?.title.includes('단어') || goal?.title.includes('공부')
+                              ? '예: 20개 중 18개 정답 (오답: apple, banana)'
+                              : 'https://github.com/계정/저장소'
+                            }
+                            className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-body-sm text-on-surface focus:outline-none focus:border-primary"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex gap-3 justify-end">
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            setIsSubTaskModalOpen(false);
+                            setCompletingTask(null);
+                            setValidationError(null);
+                          }}
+                          className="px-4 py-2 border border-outline-variant rounded-lg text-body-sm text-on-surface hover:bg-surface-container-low"
+                        >
+                          닫기
+                        </button>
+                        <button 
+                          type="submit" 
+                          className="px-5 py-2 bg-primary text-on-primary rounded-lg text-body-sm font-bold hover:bg-primary/95 shadow-md flex items-center gap-1"
+                        >
+                          최종 완료 확정
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

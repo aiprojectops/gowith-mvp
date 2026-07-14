@@ -29,6 +29,7 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
   const [claudeApiKeyInput, setClaudeApiKeyInput] = useState(localStorage.getItem('gowith_claude_api_key') || '');
   const [testLoading, setTestLoading] = useState(false);
   const [testStatus, setTestStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [generatingSubTaskId, setGeneratingSubTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentGoalId) {
@@ -467,6 +468,92 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
     }
   };
 
+  const handleGenerateSubTasks = async (task: Task) => {
+    let localKey = localStorage.getItem('gowith_gemini_api_key');
+    if (!localKey) {
+      setIsApiKeyModalOpen(true);
+      return;
+    }
+
+    setGeneratingSubTaskId(task.id);
+    setError(null);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: localKey });
+      const promptText = `
+당신은 목표 관리 지원 AI 비서입니다. 다음 과제(태스크)를 수행하여 실제 완성된 결과물이 나오도록 돕는 구체적이고 실천 가능한 단계별 지침(서브 과제)을 3~5개 생성해 주세요.
+
+[목표 정보]
+- 목표명: "${goal.title}"
+- 목표 성공 기준: "${goal.success_condition}"
+
+[수행할 과제 정보]
+- 과제명: "${task.title}"
+- 과제 난이도: ${task.difficulty}단계 (1~5)
+- 예상 소요 시간: ${task.estimated_minutes}분
+- 과제 완료 기준: "${task.completion_condition}"
+
+[출력 요구사항]
+1. 과제 완료 기준("${task.completion_condition}")을 실제 달성하여 최종 결과물이 도출되도록 이끄는 명확한 하위 단계들을 작성하세요.
+   - 예: 개발 과제라면 디렉토리 구성 -> UI 코딩 -> 데이터 연동 -> 배포와 같이 순차적으로 완성 결과물이 나오는 단계.
+   - 예: 영어 공부라면 단어 선정 -> 암기 -> 1차 셀프 테스트 -> 오답 노트 -> 최종 복습과 같이 결과를 검증하는 단계.
+2. 각 서브 과제(단계)는 한 문장 내외로 명확하고 구체적인 설명과 함께 명령문 형태로 작성해 주세요.
+3. 단계 개수는 최소 3개에서 최대 5개 이내로 작성해 주세요.
+
+응답 형식은 아래 JSON 구조를 만족해야 합니다.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: promptText,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: {
+              sub_tasks: {
+                type: 'ARRAY',
+                items: {
+                  type: 'OBJECT',
+                  properties: {
+                    title: { type: 'STRING', description: '서브 과제 제목 (예: package.json 초기화)' },
+                    description: { type: 'STRING', description: '서브 과제 상세 지침 (예: npm init -y 실행 후 필수 라이브러리 설치)' }
+                  },
+                  required: ['title', 'description']
+                }
+              }
+            },
+            required: ['sub_tasks']
+          }
+        }
+      });
+
+      const text = response.text;
+      if (!text) {
+        throw new Error('AI 응답을 받지 못했습니다.');
+      }
+
+      const result = JSON.parse(text);
+      if (result && Array.isArray(result.sub_tasks)) {
+        const subTasks = result.sub_tasks.map((st: any) => ({
+          id: Math.random().toString(36).substr(2, 9),
+          title: st.title,
+          description: st.description,
+          status: 'todo' as const
+        }));
+
+        setLocalTasks(prev => prev.map(t => t.id === task.id ? { ...t, sub_tasks: subTasks } : t));
+      } else {
+        throw new Error('AI 결과 형식이 올바르지 않습니다.');
+      }
+    } catch (err: any) {
+      console.error('Failed to generate sub-tasks:', err);
+      setError(`상세 과제 생성 실패: ${err.message || '인증 혹은 네트워크 오류'}`);
+    } finally {
+      setGeneratingSubTaskId(null);
+    }
+  };
+
   const handleFinalize = () => {
     if (localTasks.length === 0) {
       setError('최소 1개 이상의 과제를 계획에 추가해야 합니다.');
@@ -581,10 +668,27 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
                         <p className="text-[11px] text-on-surface-variant mt-2 bg-surface p-2 rounded border border-outline-variant/10">
                           기준: {task.completion_condition}
                         </p>
+                        {task.sub_tasks && task.sub_tasks.length > 0 && (
+                          <div className="mt-2 flex items-center gap-1 text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-bold w-fit shadow-sm">
+                            <Sparkles className="w-2.5 h-2.5 fill-current" /> 상세 가이드 ({task.sub_tasks.length}단계)
+                          </div>
+                        )}
                       </div>
                       
                       {/* Controls */}
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 items-center">
+                        <button 
+                          onClick={() => handleGenerateSubTasks(task)}
+                          disabled={generatingSubTaskId !== null}
+                          className="text-on-surface-variant hover:text-primary p-1 rounded hover:bg-surface-container-low transition-colors disabled:opacity-50"
+                          title="AI 상세 가이드 생성"
+                        >
+                          {generatingSubTaskId === task.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                          ) : (
+                            <Sparkles className="w-3.5 h-3.5 text-primary" />
+                          )}
+                        </button>
                         <button 
                           onClick={() => handleOpenEditTask(task)} 
                           className="text-on-surface-variant hover:text-primary p-1 rounded hover:bg-surface-container-low transition-colors"
