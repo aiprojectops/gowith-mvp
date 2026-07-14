@@ -27,6 +27,8 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
   const [geminiApiKeyInput, setGeminiApiKeyInput] = useState(localStorage.getItem('gowith_gemini_api_key') || '');
   const [openaiApiKeyInput, setOpenaiApiKeyInput] = useState(localStorage.getItem('gowith_openai_api_key') || '');
   const [claudeApiKeyInput, setClaudeApiKeyInput] = useState(localStorage.getItem('gowith_claude_api_key') || '');
+  const [testLoading, setTestLoading] = useState(false);
+  const [testStatus, setTestStatus] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (currentGoalId) {
@@ -210,6 +212,54 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
     }
 
     setIsModalOpen(false);
+  };
+
+  const handleSaveApiKeys = async () => {
+    const sanitizedGemini = geminiApiKeyInput.trim().replace(/[^\x21-\x7E]/g, "");
+    const sanitizedOpenai = openaiApiKeyInput.trim().replace(/[^\x21-\x7E]/g, "");
+    const sanitizedClaude = claudeApiKeyInput.trim().replace(/[^\x21-\x7E]/g, "");
+
+    if (!sanitizedGemini) {
+      setTestStatus({ success: false, message: 'Gemini API 키를 입력해 주세요.' });
+      return;
+    }
+
+    setTestLoading(true);
+    setTestStatus(null);
+
+    try {
+      const aiTest = new GoogleGenAI({ apiKey: sanitizedGemini });
+      await aiTest.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: 'Hello. Reply with OK.',
+        config: { maxOutputTokens: 5 }
+      });
+
+      // Save to LocalStorage
+      localStorage.setItem('gowith_gemini_api_key', sanitizedGemini);
+      localStorage.setItem('gowith_openai_api_key', sanitizedOpenai);
+      localStorage.setItem('gowith_claude_api_key', sanitizedClaude);
+      
+      setTestStatus({ success: true, message: '인증 성공! 키가 유효합니다. 계획을 생성합니다...' });
+      
+      setTimeout(() => {
+        setIsApiKeyModalOpen(false);
+        setTestStatus(null);
+        handleAIPlan();
+      }, 1200);
+    } catch (err: any) {
+      console.error('API key verification failed:', err);
+      let errMsg = err.message || '알 수 없는 에러가 발생했습니다.';
+      if (errMsg.includes('non ISO-8859-1') || errMsg.includes('append')) {
+        errMsg = 'API 키에 특수문자나 한글, 혹은 공백 등 유효하지 않은 문자가 포함되어 있습니다.';
+      }
+      setTestStatus({ 
+        success: false, 
+        message: `API 키 검증 실패: ${errMsg}` 
+      });
+    } finally {
+      setTestLoading(false);
+    }
   };
 
   const handleAIPlan = async () => {
@@ -717,30 +767,41 @@ export function PlanView({ onNavigate, currentGoalId }: ViewProps) {
               </div>
             </div>
 
+            {/* Status Alert Box */}
+            {testStatus && (
+              <div className={`mt-4 p-3 rounded-lg text-[11px] font-semibold border ${
+                testStatus.success 
+                  ? 'bg-primary/10 border-primary/20 text-primary' 
+                  : 'bg-error-container text-on-error-container border-error/20'
+              }`}>
+                {testStatus.message}
+              </div>
+            )}
+
             <div className="pt-5 flex gap-3 justify-end">
               <button 
                 type="button" 
-                onClick={() => setIsApiKeyModalOpen(false)}
-                className="px-4 py-2 border border-outline-variant rounded-lg text-body-sm text-on-surface hover:bg-surface-container-low"
+                onClick={() => {
+                  setIsApiKeyModalOpen(false);
+                  setTestStatus(null);
+                }}
+                disabled={testLoading}
+                className="px-4 py-2 border border-outline-variant rounded-lg text-body-sm text-on-surface hover:bg-surface-container-low disabled:opacity-50"
               >
                 취소
               </button>
               <button 
                 type="button"
-                onClick={() => {
-                  localStorage.setItem('gowith_gemini_api_key', geminiApiKeyInput);
-                  localStorage.setItem('gowith_openai_api_key', openaiApiKeyInput);
-                  localStorage.setItem('gowith_claude_api_key', claudeApiKeyInput);
-                  setIsApiKeyModalOpen(false);
-                  
-                  // Trigger handleAIPlan again
-                  setTimeout(() => {
-                    handleAIPlan();
-                  }, 100);
-                }}
-                className="px-5 py-2 bg-primary text-on-primary rounded-lg text-body-sm font-semibold hover:bg-primary/95 flex items-center gap-1"
+                onClick={handleSaveApiKeys}
+                disabled={testLoading}
+                className="px-5 py-2 bg-primary text-on-primary rounded-lg text-body-sm font-semibold hover:bg-primary/95 flex items-center gap-1.5 disabled:opacity-50"
               >
-                <Sparkles className="w-3.5 h-3.5" /> 저장 및 계획 생성
+                {testLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                {testLoading ? '키 검증 중...' : '저장 및 계획 생성'}
               </button>
             </div>
           </div>
